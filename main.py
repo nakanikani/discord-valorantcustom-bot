@@ -12,18 +12,16 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    # Renderから割り当てられるPORTを取得（デフォルト8080）
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    # スレッドを分けてWebサーバーを裏で動かす
     t = Thread(target=run_flask)
     t.start()
 
 # --- Discord Bot 本体の設定 ---
 intents = discord.Intents.default()
-intents.message_content = True  # メッセージ内容を取得する場合
+intents.message_content = True  # メッセージ内容の取得を許可
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -34,6 +32,14 @@ async def on_ready():
 @bot.command()
 async def ping(ctx):
     await ctx.send("pong!")
+
+# --------------------------------------------------
+# ↓ 追加: !custom コマンドの処理
+# --------------------------------------------------
+@bot.command()
+async def custom(ctx):
+    # ここにカスタムパネル作成やチーム分けなどの処理を書きます
+    await ctx.send("VALORANTカスタム募集を開始します！")
 
 # Webサーバーを起動
 keep_alive()
