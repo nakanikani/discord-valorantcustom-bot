@@ -39,6 +39,14 @@ def init_db():
 def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon: str):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # 既存のRiot IDがあり、今回渡されたriot_idが"未登録"の場合は既存のIDを維持する
+    if riot_id == "未登録":
+        c.execute('SELECT riot_id FROM users WHERE user_id = ?', (user_id,))
+        row = c.fetchone()
+        if row and row[0] != "未登録":
+            riot_id = row[0]
+
     c.execute('''
         INSERT INTO users (user_id, riot_id, rank_name, rating, icon)
         VALUES (?, ?, ?, ?, ?)
@@ -280,6 +288,7 @@ async def setrank(ctx, *, rank_input: str):
     old_data = get_user_data(ctx.author.id)
     riot_id = old_data["riot_id"]
 
+    # 保存処理（riot_idを保持する）
     save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
 
     if old_data["rank"] != "Unranked":
