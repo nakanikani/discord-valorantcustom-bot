@@ -1,5 +1,6 @@
 import os
 import re
+import sqlite3
 import requests
 from threading import Thread
 from flask import Flask
@@ -16,6 +17,52 @@ def home():
 def keep_alive():
     t = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080))))
     t.start()
+
+# --- データベース (SQLite) 初期化 ---
+DB_FILE = "users_data.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            riot_id TEXT,
+            rank_name TEXT,
+            rating INTEGER,
+            icon TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon: str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO users (user_id, riot_id, rank_name, rating, icon)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            riot_id=excluded.riot_id,
+            rank_name=excluded.rank_name,
+            rating=excluded.rating,
+            icon=excluded.icon
+    ''', (user_id, riot_id, rank_name, rating, icon))
+    conn.commit()
+    conn.close()
+
+def get_user_data(user_id: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT riot_id, rank_name, rating, icon FROM users WHERE user_id = ?', (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {"riot_id": row[0], "rank": row[1], "rating": row[2], "icon": row[3]}
+    return {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
+
+# アプリ起動時にDBテーブル作成
+init_db()
 
 # --- Discord Bot 設定 ---
 intents = discord.Intents.default()
@@ -61,8 +108,6 @@ BASE_RATING = {
     "レディアント": 25,
     "Unranked": 8
 }
-
-user_db = {}
 
 def parse_rank_input(rank_input: str):
     if not rank_input:
@@ -134,9 +179,6 @@ class CustomView(discord.ui.View):
             await interaction.response.send_message("すでに参加しています！", ephemeral=True)
             return
         self.participants.append(interaction.user)
-        
-        if interaction.user.id not in user_db:
-            user_db[interaction.user.id] = {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
 
         await interaction.response.send_message(f"{interaction.user.mention} が参加しました！", ephemeral=False)
         await self.update_embed(interaction)
@@ -157,7 +199,7 @@ class CustomView(discord.ui.View):
             return
 
         players = self.participants.copy()
-        players.sort(key=lambda p: user_db.get(p.id, {}).get("rating", 8), reverse=True)
+        players.sort(key=lambda p: get_user_data(p.id)["rating"], reverse=True)
 
         team_a, team_b = [], []
         for i, player in enumerate(players):
@@ -169,7 +211,7 @@ class CustomView(discord.ui.View):
         def fmt_team(team):
             lines = []
             for p in team:
-                info = user_db.get(p.id, {"rank": "Unranked", "icon": "❓"})
+                info = get_user_data(p.id)
                 lines.append(f"• {info['icon']} {p.display_name} ({info['rank']})")
             return "\n".join(lines) or "なし"
 
@@ -182,7 +224,7 @@ class CustomView(discord.ui.View):
     async def update_embed(self, interaction: discord.Interaction):
         lines = []
         for p in self.participants:
-            info = user_db.get(p.id, {"rank": "Unranked", "icon": "❓"})
+            info = get_user_data(p.id)
             lines.append(f"• {info['icon']} {p.display_name} [{info['rank']}]")
         
         member_list = "\n".join(lines) or "なし"
@@ -211,7 +253,6 @@ async def custom(ctx):
 async def register(ctx, riot_id: str):
     rank_name, rating, icon = fetch_valorant_rank(riot_id)
     
-    # 自動取得に失敗した場合
     if not rank_name:
         await ctx.send(
             f"⚠️ **{riot_id}** のランクを自動取得できませんでした（非公開設定、アンランク、またはID入力ミスの可能性があります）。\n"
@@ -219,7 +260,7 @@ async def register(ctx, riot_id: str):
         )
         return
 
-    user_db[ctx.author.id] = {"riot_id": riot_id, "rank": rank_name, "rating": rating, "icon": icon}
+    save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
     await ctx.send(f"✅ {ctx.author.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
 
 @bot.command()
@@ -229,13 +270,10 @@ async def setrank(ctx, *, rank_input: str):
         await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank イモータル3`, `!setrank g2`")
         return
     
-    if ctx.author.id not in user_db:
-        user_db[ctx.author.id] = {"riot_id": "未登録", "rank": rank_name, "rating": rating, "icon": icon}
-    else:
-        user_db[ctx.author.id]["rank"] = rank_name
-        user_db[ctx.author.id]["rating"] = rating
-        user_db[ctx.author.id]["icon"] = icon
+    current_data = get_user_data(ctx.author.id)
+    riot_id = current_data["riot_id"]
 
+    save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
     await ctx.send(f"✏️ {ctx.author.mention} さんのランクを {icon} **{rank_name}** に更新しました！（内部レート: {rating}pt）")
 
 @bot.command()
