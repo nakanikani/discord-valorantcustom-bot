@@ -3,6 +3,7 @@ import re
 import sqlite3
 import requests
 from threading import Thread
+from collections import defaultdict
 from flask import Flask
 import discord
 from discord.ext import commands
@@ -40,7 +41,6 @@ def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # 既存のRiot IDがあり、今回渡されたriot_idが"未登録"の場合は既存のIDを維持する
     if riot_id == "未登録":
         c.execute('SELECT riot_id FROM users WHERE user_id = ?', (user_id,))
         row = c.fetchone()
@@ -75,6 +75,9 @@ init_db()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+# グローバル変数で現在の募集パネルの参加者を保持
+active_view = None
 
 RANK_ALIASES = {
     "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
@@ -248,12 +251,46 @@ async def on_ready():
 
 @bot.command()
 async def custom(ctx):
+    global active_view
+    active_view = CustomView()
     embed = discord.Embed(
         title="🎮 VALORANT カスタム募集",
         description="**【参加者一覧】 (0人)**\nなし",
         color=discord.Color.blue()
     )
-    await ctx.send(embed=embed, view=CustomView())
+    await ctx.send(embed=embed, view=active_view)
+
+@bot.command()
+async def members(ctx):
+    """参加中のメンバーとランク分布内訳を表示"""
+    global active_view
+    if not active_view or not active_view.participants:
+        await ctx.send("❓ 現在参加しているメンバーはいません。")
+        return
+
+    participants = active_view.participants
+    total_count = len(participants)
+
+    # ランク別にグループ化
+    rank_groups = defaultdict(list)
+    for p in participants:
+        info = get_user_data(p.id)
+        rank_groups[(info['icon'], info['rank'])].append(p.display_name)
+
+    embed = discord.Embed(
+        title=f"📊 現在の参加状況（合計 {total_count}名）",
+        color=discord.Color.teal()
+    )
+
+    for (icon, rank_name), names in rank_groups.items():
+        name_list = ", ".join(names)
+        embed.add_field(
+            name=f"{icon} {rank_name} ({len(names)}人)",
+            value=f"└ {name_list}",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def register(ctx, riot_id: str):
@@ -288,7 +325,6 @@ async def setrank(ctx, *, rank_input: str):
     old_data = get_user_data(ctx.author.id)
     riot_id = old_data["riot_id"]
 
-    # 保存処理（riot_idを保持する）
     save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
 
     if old_data["rank"] != "Unranked":
@@ -315,6 +351,7 @@ async def myrank(ctx):
 async def valocus(ctx):
     embed = discord.Embed(title="🎮 VALOcus ボット コマンドヘルプ", color=discord.Color.green())
     embed.add_field(name="`!custom`", value="カスタム募集パネルを表示します。", inline=False)
+    embed.add_field(name="`!members`", value="現在参加中の人の合計人数とランク別の参加内訳を表示します。", inline=False)
     embed.add_field(name="`!register 名前#TAG`", value="Riot IDを入力して最新ランクを自動取得・登録します。", inline=False)
     embed.add_field(name="`!setrank ランク`", value="手動でランクを設定・更新します。\n（例: `!setrank immo3`, `!setrank イモータル3`, `!setrank d2`）", inline=False)
     embed.add_field(name="`!myrank`", value="現在登録されている自分のRiot IDとランク情報を確認します。", inline=False)
