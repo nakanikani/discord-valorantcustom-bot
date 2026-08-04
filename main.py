@@ -61,7 +61,6 @@ def get_user_data(user_id: int):
         return {"riot_id": row[0], "rank": row[1], "rating": row[2], "icon": row[3]}
     return {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
 
-# アプリ起動時にDBテーブル作成
 init_db()
 
 # --- Discord Bot 設定 ---
@@ -69,7 +68,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# ランク表記ゆれ変換マップ
 RANK_ALIASES = {
     "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
     "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ",
@@ -260,8 +258,17 @@ async def register(ctx, riot_id: str):
         )
         return
 
+    old_data = get_user_data(ctx.author.id)
     save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
-    await ctx.send(f"✅ {ctx.author.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
+
+    if old_data["rank"] != "Unranked":
+        await ctx.send(
+            f"🔄 {ctx.author.mention} さんの登録情報を更新しました！\n"
+            f"• Riot ID: `{riot_id}`\n"
+            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+        )
+    else:
+        await ctx.send(f"✅ {ctx.author.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
 
 @bot.command()
 async def setrank(ctx, *, rank_input: str):
@@ -270,18 +277,38 @@ async def setrank(ctx, *, rank_input: str):
         await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank イモータル3`, `!setrank g2`")
         return
     
-    current_data = get_user_data(ctx.author.id)
-    riot_id = current_data["riot_id"]
+    old_data = get_user_data(ctx.author.id)
+    riot_id = old_data["riot_id"]
 
     save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
-    await ctx.send(f"✏️ {ctx.author.mention} さんのランクを {icon} **{rank_name}** に更新しました！（内部レート: {rating}pt）")
+
+    if old_data["rank"] != "Unranked":
+        await ctx.send(
+            f"✏️ {ctx.author.mention} さんのランクを更新しました！\n"
+            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+        )
+    else:
+        await ctx.send(f"✏️ {ctx.author.mention} さんのランクを {icon} **{rank_name}** に設定しました！（内部レート: {rating}pt）")
+
+@bot.command()
+async def myrank(ctx):
+    data = get_user_data(ctx.author.id)
+    if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
+        await ctx.send(f"❓ {ctx.author.mention} さんのランク情報はまだ登録されていません。\n`!register 名前#TAG` または `!setrank ランク名` で登録できます。")
+    else:
+        await ctx.send(
+            f"👤 {ctx.author.mention} さんの登録情報:\n"
+            f"• Riot ID: `{data['riot_id']}`\n"
+            f"• 現在のランク: {data['icon']} **{data['rank']}** (内部レート: {data['rating']}pt)"
+        )
 
 @bot.command()
 async def valocus(ctx):
     embed = discord.Embed(title="🎮 VALOcus ボット コマンドヘルプ", color=discord.Color.green())
     embed.add_field(name="`!custom`", value="カスタム募集パネルを表示します。", inline=False)
-    embed.add_field(name="`!register 名前#TAG`", value="Riot IDを入力して公式APIから最新ランクを自動取得・登録します。", inline=False)
+    embed.add_field(name="`!register 名前#TAG`", value="Riot IDを入力して最新ランクを自動取得・登録します。", inline=False)
     embed.add_field(name="`!setrank ランク`", value="手動でランクを設定・更新します。\n（例: `!setrank immo3`, `!setrank イモータル3`, `!setrank d2`）", inline=False)
+    embed.add_field(name="`!myrank`", value="現在登録されている自分のRiot IDとランク情報を確認します。", inline=False)
     embed.add_field(name="`!ping`", value="ボットの動作確認を行います。", inline=False)
     await ctx.send(embed=embed)
 
