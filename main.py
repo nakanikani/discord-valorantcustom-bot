@@ -49,7 +49,6 @@ RANK_ICONS = {
     "Unranked": "❓"
 }
 
-# 1ポイント刻みの基準値 (アイアン1=1pt, アイアン2=2pt...)
 BASE_RATING = {
     "アイアン": 1, 
     "ブロンズ": 4, 
@@ -66,7 +65,6 @@ BASE_RATING = {
 user_db = {}
 
 def parse_rank_input(rank_input: str):
-    """文字列からランク名・1ずつ加算される内部レート・アイコンを解析"""
     if not rank_input:
         return "Unranked", 8, "❓"
         
@@ -93,48 +91,34 @@ def parse_rank_input(rank_input: str):
     if matched_rank == "レディアント":
         return "レディアント", 25, icon
 
-    # 計算式: 各ランクTier1の基礎点 + (Tier - 1)
     rating = BASE_RATING[matched_rank] + (tier - 1)
     formatted_name = f"{matched_rank}{tier}"
     return formatted_name, rating, icon
 
 def fetch_valorant_rank(riot_id):
-    """APIキーを使用してHenrikDev APIからランクを取得"""
     if "#" not in riot_id:
         return None, None, None
         
     name, tag = riot_id.split("#", 1)
-    api_key = os.environ.get("HENRIK_API_KEY")
+    api_key = os.environ.get("HENRIK_API_KEY", "").strip()
 
     headers = {
         "User-Agent": "Mozilla/5.0",
-        "Authorization": api_key if api_key else ""
+        "Authorization": api_key
     }
 
-    # v2 および v3 エンドポイントを試行
-    urls = [
-        f"https://api.henrikdev.xyz/valorant/v2/mmr/ap/{name}/{tag}",
-        f"https://api.henrikdev.xyz/valorant/v3/mmr/ap/pc/{name}/{tag}"
-    ]
+    url = f"https://api.henrikdev.xyz/valorant/v2/mmr/ap/{name}/{tag}"
 
-    for url in urls:
-        try:
-            res = requests.get(url, headers=headers, timeout=8)
-            if res.status_code == 200:
-                data = res.json()
-                
-                # v2 レスポンス解析
-                tier_name = data.get("data", {}).get("current_data", {}).get("currenttierpatched")
-                # v3 レスポンス解析
-                if not tier_name:
-                    tier_name = data.get("data", {}).get("current", {}).get("tier", {}).get("name")
-
-                if tier_name and tier_name != "Unranked":
-                    return parse_rank_input(tier_name)
-                elif tier_name == "Unranked":
-                    return "Unranked", 8, "❓"
-        except Exception as e:
-            print(f"Fetch Error: {e}")
+    try:
+        res = requests.get(url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            tier_name = data.get("data", {}).get("current_data", {}).get("currenttierpatched")
+            
+            if tier_name and tier_name != "Unranked":
+                return parse_rank_input(tier_name)
+    except Exception as e:
+        print(f"Fetch Error: {e}")
 
     return None, None, None
 
@@ -227,11 +211,11 @@ async def custom(ctx):
 async def register(ctx, riot_id: str):
     rank_name, rating, icon = fetch_valorant_rank(riot_id)
     
+    # 自動取得に失敗した場合
     if not rank_name:
         await ctx.send(
-            f"⚠️ **{riot_id}** のランクを取得できませんでした。\n"
-            f"Riot ID（大文字・小文字含む）が正しいか、コンペティティブ（ランク戦）をプレイ済みかご確認ください。\n"
-            f"手動設定する場合は `!setrank ランク名` をご利用ください。"
+            f"⚠️ **{riot_id}** のランクを自動取得できませんでした（非公開設定、アンランク、またはID入力ミスの可能性があります）。\n"
+            f"お手数ですが、`!setrank ランク名` で手動登録をお願いします！（例: `!setrank immo1`, `!setrank ダイヤ2`）"
         )
         return
 
