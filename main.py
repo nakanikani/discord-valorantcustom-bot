@@ -80,7 +80,8 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
     if auto_refresh and riot_id != "未登録":
         new_rank, new_rating, new_icon = fetch_valorant_rank(riot_id)
         if new_rank and new_rank != rank_name:
-            save_user_data(user_id, riot_id, new_rank, new_icon, new_rating)
+            # 引数の順番を引数定義 (user_id, riot_id, rank_name, rating, icon) に修正
+            save_user_data(user_id, riot_id, new_rank, new_rating, new_icon)
             return {"riot_id": riot_id, "rank": new_rank, "rating": new_rating, "icon": new_icon}
 
     return {"riot_id": riot_id, "rank": rank_name, "rating": rating, "icon": icon}
@@ -92,7 +93,6 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 active_view = None
 
-# ご指定の略称・エイリアス（ase, 汗, 芋, imo, アセ, イモ）を追加
 RANK_ALIASES = {
     "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
     "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ",
