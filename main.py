@@ -80,7 +80,6 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
     if auto_refresh and riot_id != "未登録":
         new_rank, new_rating, new_icon = fetch_valorant_rank(riot_id)
         if new_rank and new_rank != rank_name:
-            # 引数の順番を引数定義 (user_id, riot_id, rank_name, rating, icon) に修正
             save_user_data(user_id, riot_id, new_rank, new_rating, new_icon)
             return {"riot_id": riot_id, "rank": new_rank, "rating": new_rating, "icon": new_icon}
 
@@ -240,11 +239,11 @@ class MatchResultView(discord.ui.View):
         next_embed.title = "🔄 レート更新！【次戦のチーム分け結果】"
         await interaction.followup.send(embed=next_embed, view=next_view)
 
-    @discord.ui.button(label="🔴 チームA 勝利", style=discord.ButtonStyle.danger, custom_id="win_a_btn")
+    @discord.ui.button(label="🔴 チームA 勝利", style=discord.ButtonStyle.danger)
     async def win_a(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_match_end(interaction, self.team_a, self.team_b, "🏆 試合結果: 🔴 チームA 勝利！")
 
-    @discord.ui.button(label="🔵 チームB 勝利", style=discord.ButtonStyle.primary, custom_id="win_b_btn")
+    @discord.ui.button(label="🔵 チームB 勝利", style=discord.ButtonStyle.primary)
     async def win_b(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_match_end(interaction, self.team_b, self.team_a, "🏆 試合結果: 🔵 チームB 勝利！")
 
@@ -254,7 +253,7 @@ class CustomView(discord.ui.View):
         super().__init__(timeout=None)
         self.participants = []
 
-    @discord.ui.button(label="参加する", style=discord.ButtonStyle.green, custom_id="join_btn")
+    @discord.ui.button(label="参加する", style=discord.ButtonStyle.green)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user in self.participants:
             await interaction.response.send_message("すでに参加しています！", ephemeral=True)
@@ -263,7 +262,7 @@ class CustomView(discord.ui.View):
         await interaction.response.send_message(f"{interaction.user.mention} が参加しました！", ephemeral=False)
         await self.update_embed(interaction)
 
-    @discord.ui.button(label="辞退する", style=discord.ButtonStyle.red, custom_id="leave_btn")
+    @discord.ui.button(label="辞退する", style=discord.ButtonStyle.red)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user not in self.participants:
             await interaction.response.send_message("参加していません。", ephemeral=True)
@@ -272,7 +271,7 @@ class CustomView(discord.ui.View):
         await interaction.response.send_message(f"{interaction.user.mention} が辞退しました。", ephemeral=False)
         await self.update_embed(interaction)
 
-    @discord.ui.button(label="均等チーム分け実行", style=discord.ButtonStyle.blurple, custom_id="split_btn")
+    @discord.ui.button(label="均等チーム分け実行", style=discord.ButtonStyle.blurple)
     async def split_teams(self, interaction: discord.Interaction, button: discord.ui.Button):
         if len(self.participants) < 2:
             await interaction.response.send_message("チーム分けには最低2人必要です！", ephemeral=True)
@@ -318,14 +317,13 @@ async def members(ctx):
         await ctx.send("❓ 現在参加しているメンバーはいません。")
         return
 
-    participants = active_view.participants
     rank_groups = defaultdict(list)
-    for p in participants:
+    for p in active_view.participants:
         info = get_user_data(p.id, auto_refresh=False)
         rank_groups[(info['icon'], info['rank'])].append(p.display_name)
 
     embed = discord.Embed(
-        title=f"📊 現在の参加状況（合計 {len(participants)}名）",
+        title=f"📊 現在の参加状況（合計 {len(active_view.participants)}名）",
         color=discord.Color.teal()
     )
 
@@ -336,7 +334,12 @@ async def members(ctx):
             inline=False
         )
 
-    await ctx.send(embed=embed)
+    # 独立した新しいCustomViewを作成してボタンを表示
+    new_view = CustomView()
+    new_view.participants = active_view.participants
+    active_view = new_view  # グローバル参照を最新Viewに更新
+
+    await ctx.send(embed=embed, view=new_view)
 
 @bot.command()
 async def register(ctx, riot_id: str):
