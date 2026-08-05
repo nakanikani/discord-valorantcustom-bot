@@ -6,7 +6,7 @@ from collections import defaultdict
 from flask import Flask
 import discord
 from discord.ext import commands
-import supabase  # モジュールごとインポートして警告を回避
+import supabase
 
 # --- Render対策: Keep Alive 用 Webサーバー ---
 app = Flask('')
@@ -32,6 +32,7 @@ supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL
 
 def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon: str):
     if not supabase_db:
+        print("⚠️ Supabase 接続が存在しないため保存をスキップしました。")
         return
 
     data = {
@@ -44,8 +45,9 @@ def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon
     
     try:
         supabase_db.table("users").upsert(data).execute()
+        print(f"✅ 保存成功: {user_id} -> {rank_name} ({rating}pt)")
     except Exception as e:
-        print(f"Supabase Save Error: {e}")
+        print(f"❌ Supabase Save Error: {e}")
 
 def update_user_rating(user_id: int, diff: int):
     data = get_user_data(user_id, auto_refresh=False)
@@ -63,7 +65,7 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
         res = supabase_db.table("users").select("*").eq("user_id", int(user_id)).execute()
         rows = res.data
     except Exception as e:
-        print(f"Supabase Fetch Error: {e}")
+        print(f"❌ Supabase Fetch Error: {e}")
         return default_data
 
     if not rows:
@@ -78,7 +80,7 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
     if auto_refresh and riot_id != "未登録":
         new_rank, new_rating, new_icon = fetch_valorant_rank(riot_id)
         if new_rank and new_rank != rank_name:
-            save_user_data(user_id, riot_id, new_rank, new_rating, new_icon)
+            save_user_data(user_id, riot_id, new_rank, new_icon, new_rating)
             return {"riot_id": riot_id, "rank": new_rank, "rating": new_rating, "icon": new_icon}
 
     return {"riot_id": riot_id, "rank": rank_name, "rating": rating, "icon": icon}
@@ -90,6 +92,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 active_view = None
 
+# ご指定の略称・エイリアス（ase, 汗, 芋, imo, アセ, イモ）を追加
 RANK_ALIASES = {
     "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
     "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ",
@@ -97,8 +100,8 @@ RANK_ALIASES = {
     "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド",
     "platinum": "プラチナ", "plat": "プラチナ", "p": "プラチナ", "プラチナ": "プラチナ",
     "diamond": "ダイヤ", "dia": "ダイヤ", "d": "ダイヤ", "ダイヤ": "ダイヤ",
-    "ascendant": "アセンダント", "asc": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント",
-    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "イモータル": "イモータル",
+    "ascendant": "アセンダント", "asc": "アセンダント", "ase": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント", "アセ": "アセンダント", "汗": "アセンダント",
+    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "imo": "イモータル", "イモータル": "イモータル", "イモ": "イモータル", "芋": "イモータル",
     "radiant": "レディアント", "rad": "レディアント", "r": "レディアント", "レディアント": "レディアント",
     "unranked": "Unranked", "ur": "Unranked", "アンランク": "Unranked"
 }
@@ -137,7 +140,7 @@ def parse_rank_input(rank_input: str):
     if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input:
         return "レディアント", 35, "🟡✨"
 
-    match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー]+)(\d)?", clean_input)
+    match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー一-龠]+)(\d)?", clean_input)
     if not match:
         return "Unranked", 8, "❓"
     
@@ -361,11 +364,32 @@ async def register(ctx, riot_id: str):
 async def setrank(ctx, *, rank_input: str):
     rank_name, rating, icon = parse_rank_input(rank_input)
     if not rank_name or rank_name == "Unranked":
-        await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank ダイヤ2`")
+        await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank 汗1`, `!setrank 芋2`")
         return
     
     old_data = get_user_data(ctx.author.id, auto_refresh=False)
     save_user_data(ctx.author.id, old_data["riot_id"], rank_name, rating, icon)
+
+    global active_view
+    if active_view and ctx.author in active_view.participants:
+        lines = []
+        for p in active_view.participants:
+            info = get_user_data(p.id, auto_refresh=False)
+            lines.append(f"• {info['icon']} {p.display_name} [{info['rank']}]")
+        
+        member_list = "\n".join(lines) or "なし"
+        embed = discord.Embed(
+            title="🎮 VALORANT カスタム募集",
+            description=f"**【参加者一覧】 ({len(active_view.participants)}人)**\n{member_list}",
+            color=discord.Color.blue()
+        )
+        try:
+            async for message in ctx.channel.history(limit=10):
+                if message.author == bot.user and message.embeds and "VALORANT カスタム募集" in message.embeds[0].title:
+                    await message.edit(embed=embed, view=active_view)
+                    break
+        except Exception:
+            pass
 
     if old_data["rank"] != "Unranked":
         await ctx.send(
