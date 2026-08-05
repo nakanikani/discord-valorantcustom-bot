@@ -1,4 +1,5 @@
 discord.py
 Flask
-python-dotenv
 requests
+supabase
+vecs

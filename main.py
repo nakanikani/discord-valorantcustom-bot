@@ -1,14 +1,14 @@
 import os
 import re
-import sqlite3
 import requests
 from threading import Thread
 from collections import defaultdict
 from flask import Flask
 import discord
 from discord.ext import commands
+import supabase  # モジュールごとインポートして警告を回避
 
-# --- Render対策: Webサーバー ---
+# --- Render対策: Keep Alive 用 Webサーバー ---
 app = Flask('')
 
 @app.route('/')
@@ -19,77 +19,69 @@ def keep_alive():
     t = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080))))
     t.start()
 
-# --- データベース (SQLite) 初期化 ---
-DB_FILE = "users_data.db"
+# --- Supabase 接続設定 ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            riot_id TEXT,
-            rank_name TEXT,
-            rating INTEGER,
-            icon TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("⚠️ SUPABASE_URL または SUPABASE_KEY が環境変数に設定されていません！")
+
+supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+# --- データベース操作関数 ---
 
 def save_user_data(user_id: int, riot_id: str, rank_name: str, rating: int, icon: str):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    if riot_id == "未登録":
-        c.execute('SELECT riot_id FROM users WHERE user_id = ?', (user_id,))
-        row = c.fetchone()
-        if row and row[0] != "未登録":
-            riot_id = row[0]
+    if not supabase_db:
+        return
 
-    c.execute('''
-        INSERT INTO users (user_id, riot_id, rank_name, rating, icon)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            riot_id=excluded.riot_id,
-            rank_name=excluded.rank_name,
-            rating=excluded.rating,
-            icon=excluded.icon
-    ''', (user_id, riot_id, rank_name, rating, icon))
-    conn.commit()
-    conn.close()
+    data = {
+        "user_id": int(user_id),
+        "riot_id": str(riot_id) if riot_id else "未登録",
+        "rank_name": str(rank_name),
+        "rating": int(rating),
+        "icon": str(icon)
+    }
+    
+    try:
+        supabase_db.table("users").upsert(data).execute()
+    except Exception as e:
+        print(f"Supabase Save Error: {e}")
 
 def update_user_rating(user_id: int, diff: int):
-    data = get_user_data(user_id)
+    data = get_user_data(user_id, auto_refresh=False)
     new_rating = max(1, data["rating"] + diff)
     save_user_data(user_id, data["riot_id"], data["rank"], new_rating, data["icon"])
     return new_rating
 
 def get_user_data(user_id: int, auto_refresh: bool = False):
-    """登録されているデータを取得。auto_refresh=True の場合は API から最新ランクを再取得"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT riot_id, rank_name, rating, icon FROM users WHERE user_id = ?', (user_id,))
-    row = c.fetchone()
-    conn.close()
+    """登録されているデータを取得。"""
+    default_data = {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
+    if not supabase_db:
+        return default_data
 
-    if not row:
-        return {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
+    try:
+        res = supabase_db.table("users").select("*").eq("user_id", int(user_id)).execute()
+        rows = res.data
+    except Exception as e:
+        print(f"Supabase Fetch Error: {e}")
+        return default_data
 
-    riot_id, rank_name, rating, icon = row[0], row[1], row[2], row[3]
+    if not rows:
+        return default_data
 
-    # Riot ID が登録されていて、自動更新フラグが有効な場合は API から最新取得
+    row = rows[0]
+    riot_id = row.get("riot_id") or "未登録"
+    rank_name = row.get("rank_name") or "Unranked"
+    rating = row.get("rating", 8)
+    icon = row.get("icon") or "❓"
+
     if auto_refresh and riot_id != "未登録":
         new_rank, new_rating, new_icon = fetch_valorant_rank(riot_id)
-        if new_rank:
-            # ランクが変わっていた場合はデータベースを自動更新
-            if new_rank != rank_name:
-                save_user_data(user_id, riot_id, new_rank, new_rating, new_icon)
-                return {"riot_id": riot_id, "rank": new_rank, "rating": new_rating, "icon": new_icon}
+        if new_rank and new_rank != rank_name:
+            save_user_data(user_id, riot_id, new_rank, new_rating, new_icon)
+            return {"riot_id": riot_id, "rank": new_rank, "rating": new_rating, "icon": new_icon}
 
     return {"riot_id": riot_id, "rank": rank_name, "rating": rating, "icon": icon}
-
-init_db()
 
 # --- Discord Bot 設定 ---
 intents = discord.Intents.default()
@@ -105,30 +97,45 @@ RANK_ALIASES = {
     "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド",
     "platinum": "プラチナ", "plat": "プラチナ", "p": "プラチナ", "プラチナ": "プラチナ",
     "diamond": "ダイヤ", "dia": "ダイヤ", "d": "ダイヤ", "ダイヤ": "ダイヤ",
-    "ascendant": "アセンダント", "asce": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント","汗": "アセンダント","アセ"
-    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "イモータル": "イモータル", "イモータル": "イモータル","イモ": "イモータル", "芋" 
+    "ascendant": "アセンダント", "asc": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント",
+    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "イモータル": "イモータル",
     "radiant": "レディアント", "rad": "レディアント", "r": "レディアント", "レディアント": "レディアント",
     "unranked": "Unranked", "ur": "Unranked", "アンランク": "Unranked"
 }
 
 RANK_ICONS = {
-    "アイアン": "🔘", "ブロンズ": "🟤", "シルバー": "⚪", "ゴールド": "🟡",
-    "プラチナ": "🔵", "ダイヤ": "🟣", "アセンダント": "🟢", "イモータル": "🔴",
-    "レディアント": "🟡✨", "Unranked": "❓"
+    "アイアン": "🔘",
+    "ブロンズ": "🟤",
+    "シルバー": "⚪",
+    "ゴールド": "🟡",
+    "プラチナ": "🔵",
+    "ダイヤ": "🟣",
+    "アセンダント": "🟢",
+    "イモータル": "🔴",
+    "レディアント": "🟡✨",
+    "Unranked": "❓"
 }
 
 BASE_RATING = {
-    "アイアン": 1, "ブロンズ": 4, "シルバー": 7, "ゴールド": 10, 
-    "プラチナ": 13, "ダイヤ": 16, "アセンダント": 19, "イモータル": 25, 
-    "レディアント": 35, "Unranked": 8
+    "アイアン": 1,
+    "ブロンズ": 4,
+    "シルバー": 7,
+    "ゴールド": 10, 
+    "プラチナ": 13,
+    "ダイヤ": 16,
+    "アセンダント": 19,
+    "イモータル": 22,
+    "レディアント": 35,
+    "Unranked": 8
 }
 
 def parse_rank_input(rank_input: str):
     if not rank_input:
         return "Unranked", 8, "❓"
     clean_input = rank_input.lower().replace(" ", "").replace("-", "")
+    
     if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input:
-        return "レディアント", 25, "🟡✨"
+        return "レディアント", 35, "🟡✨"
 
     match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー]+)(\d)?", clean_input)
     if not match:
@@ -144,14 +151,18 @@ def parse_rank_input(rank_input: str):
     if matched_rank == "Unranked":
         return "Unranked", 8, icon
     if matched_rank == "レディアント":
-        return "レディアント", 25, icon
+        return "レディアント", 35, icon
 
-    rating = BASE_RATING[matched_rank] + (tier - 1)
+    if matched_rank == "イモータル" and tier == 3:
+        rating = 30
+    else:
+        rating = BASE_RATING[matched_rank] + (tier - 1)
+
     formatted_name = f"{matched_rank}{tier}"
     return formatted_name, rating, icon
 
 def fetch_valorant_rank(riot_id):
-    if "#" not in riot_id:
+    if not riot_id or "#" not in riot_id:
         return None, None, None
     name, tag = riot_id.split("#", 1)
     api_key = os.environ.get("HENRIK_API_KEY", "").strip()
@@ -171,8 +182,7 @@ def fetch_valorant_rank(riot_id):
 
 def generate_team_embed_and_view(participants):
     players = participants.copy()
-    # チーム分け時に最新ランクを自動同期してソート
-    players.sort(key=lambda p: get_user_data(p.id, auto_refresh=True)["rating"], reverse=True)
+    players.sort(key=lambda p: get_user_data(p.id, auto_refresh=False)["rating"], reverse=True)
 
     team_a, team_b = [], []
     for i, player in enumerate(players):
@@ -184,7 +194,7 @@ def generate_team_embed_and_view(participants):
     def fmt_team(team):
         lines = []
         for p in team:
-            info = get_user_data(p.id)
+            info = get_user_data(p.id, auto_refresh=False)
             lines.append(f"• {info['icon']} {p.display_name} ({info['rank']} / {info['rating']}pt)")
         return "\n".join(lines) or "なし"
 
@@ -220,7 +230,7 @@ class MatchResultView(discord.ui.View):
 
         embed = interaction.message.embeds[0]
         embed.title = winner_title
-        embed.set_footer(text="※勝者+1pt / 败者-1pt を反映しました。")
+        embed.set_footer(text="※勝者+1pt / 敗者-1pt を反映しました。")
         await interaction.response.edit_message(embed=embed, view=self)
 
         next_embed, next_view = generate_team_embed_and_view(self.all_participants)
@@ -271,8 +281,7 @@ class CustomView(discord.ui.View):
     async def update_embed(self, interaction: discord.Interaction):
         lines = []
         for p in self.participants:
-            # 参加時にランクを最新に自動同期
-            info = get_user_data(p.id, auto_refresh=True)
+            info = get_user_data(p.id, auto_refresh=False)
             lines.append(f"• {info['icon']} {p.display_name} [{info['rank']}]")
         
         member_list = "\n".join(lines) or "なし"
@@ -309,7 +318,7 @@ async def members(ctx):
     participants = active_view.participants
     rank_groups = defaultdict(list)
     for p in participants:
-        info = get_user_data(p.id)
+        info = get_user_data(p.id, auto_refresh=False)
         rank_groups[(info['icon'], info['rank'])].append(p.display_name)
 
     embed = discord.Embed(
@@ -336,7 +345,7 @@ async def register(ctx, riot_id: str):
         )
         return
 
-    old_data = get_user_data(ctx.author.id)
+    old_data = get_user_data(ctx.author.id, auto_refresh=False)
     save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
 
     if old_data["rank"] != "Unranked":
@@ -355,9 +364,8 @@ async def setrank(ctx, *, rank_input: str):
         await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank ダイヤ2`")
         return
     
-    old_data = get_user_data(ctx.author.id)
-    riot_id = old_data["riot_id"]
-    save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
+    old_data = get_user_data(ctx.author.id, auto_refresh=False)
+    save_user_data(ctx.author.id, old_data["riot_id"], rank_name, rating, icon)
 
     if old_data["rank"] != "Unranked":
         await ctx.send(
@@ -369,7 +377,6 @@ async def setrank(ctx, *, rank_input: str):
 
 @bot.command()
 async def myrank(ctx):
-    # 最新ランクを自動同期して表示
     data = get_user_data(ctx.author.id, auto_refresh=True)
     if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
         await ctx.send(f"❓ {ctx.author.mention} さんのランク情報はまだ登録されていません。")
