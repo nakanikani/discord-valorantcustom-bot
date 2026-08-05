@@ -93,16 +93,26 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 active_view = None
 
 RANK_ALIASES = {
+    # アイアン
     "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
+    # ブロンズ
     "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ", "ブロ": "ブロンズ",
+    # シルバー
     "silver": "シルバー", "s": "シルバー", "シルバー": "シルバー", "シル": "シルバー",
-    "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド", "ゴル": "ゴールド", 
+    # ゴールド
+    "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド", "ゴル": "ゴールド",
+    # プラチナ
     "platinum": "プラチナ", "plat": "プラチナ", "p": "プラチナ", "プラチナ": "プラチナ", "プラ": "プラチナ",
+    # ダイヤ
     "diamond": "ダイヤ", "dia": "ダイヤ", "d": "ダイヤ", "ダイヤ": "ダイヤ",
-    "ascendant": "アセンダント", "asce": "アセンダント", "ase": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント", "アセ": "アセンダント", "汗": "アセンダント",
-    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "imo": "イモータル", "芋": "イモータル", "イモ": "イモータル",
+    # アセンダント
+    "ascendant": "アセンダント", "asc": "アセンダント", "ase": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント", "アセ": "アセンダント", "汗": "アセンダント",
+    # イモータル
+    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "imo": "イモータル", "イモータル": "イモータル", "イモ": "イモータル", "芋": "イモータル",
+    # レディアント
     "radiant": "レディアント", "rad": "レディアント", "r": "レディアント", "レディアント": "レディアント", "レディ": "レディアント",
-    "unranked": "アンランク", "ur": "アンランク", "アンランク": "アンランク"
+    # アンランク
+    "unranked": "Unranked", "ur": "Unranked", "アンランク": "Unranked"
 }
 
 RANK_ICONS = {
@@ -136,7 +146,7 @@ def parse_rank_input(rank_input: str):
         return "Unranked", 8, "❓"
     clean_input = rank_input.lower().replace(" ", "").replace("-", "")
     
-    if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input:
+    if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input or "レディ" in clean_input:
         return "レディアント", 35, "🟡✨"
 
     match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー一-龠]+)(\d)?", clean_input)
@@ -345,10 +355,27 @@ async def members(ctx):
 async def register(ctx, riot_id: str):
     rank_name, rating, icon = fetch_valorant_rank(riot_id)
     if not rank_name:
-        await ctx.send(
-            f"⚠️ **{riot_id}** のランクを自動取得できませんでした。\n"
-            f"`!setrank ランク名` で手動登録をお願いします！"
+        embed = discord.Embed(
+            title="⚠️ ランク情報を自動取得できませんでした",
+            description=f"**Riot ID:** `{riot_id}`\n\n非公開設定になっているか、今幕未プレイの可能性があります。",
+            color=discord.Color.gold()
         )
+        embed.add_field(
+            name="🔓 公開設定にする手順（Tracker.gg）",
+            value=(
+                "1. [Tracker.gg](https://tracker.gg/valorant) にアクセス\n"
+                "2. 右上の **「Sign in with Riot Games」** からログイン\n"
+                "3. ログイン後、プロフィールを **「Public (公開)」** に変更\n"
+                "※設定後、再度 `!register` をお試しください。"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="💡 手動で登録する場合",
+            value=f"`!setrank ランク名` で直接登録できます！\n（例: `!setrank immo1`, `!setrank ダイヤ2`）",
+            inline=False
+        )
+        await ctx.send(embed=embed)
         return
 
     old_data = get_user_data(ctx.author.id, auto_refresh=False)
