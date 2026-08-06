@@ -290,13 +290,16 @@ class TierButtonView(discord.ui.View):
 
     def make_callback(self, tier):
         async def callback(interaction: discord.Interaction):
+            # タイムアウト回避の遅延応答
+            await interaction.response.defer()
+            
             target_rank = f"{self.rank_name}{tier}"
             name, rating, icon = parse_rank_input(target_rank)
             
             old_data = get_user_data(interaction.user.id, auto_refresh=False)
             save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
             
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"✅ ランクを {icon} **{name}** に設定しました！",
                 embed=None,
                 view=None
@@ -309,12 +312,13 @@ class TierButtonView(discord.ui.View):
         return callback
 
     async def go_back(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         embed = discord.Embed(
             title="🔰 ランク手動設定",
             description="ご自身の現在のランクボタンをクリックしてください！",
             color=discord.Color.light_grey()
         )
-        await interaction.response.edit_message(embed=embed, view=RankButtonView())
+        await interaction.edit_original_response(embed=embed, view=RankButtonView())
 
 # --- ランクを選択する用のボタンパネル（1段階目） ---
 class RankButtonView(discord.ui.View):
@@ -342,12 +346,15 @@ class RankButtonView(discord.ui.View):
 
     def make_callback(self, rank_name, style, emoji):
         async def callback(interaction: discord.Interaction):
+            # タイムアウト回避の遅延応答
+            await interaction.response.defer()
+            
             if rank_name in ["レディアント", "Unranked"]:
                 name, rating, icon = parse_rank_input(rank_name)
                 old_data = get_user_data(interaction.user.id, auto_refresh=False)
                 save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
                 
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     content=f"✅ ランクを {icon} **{name}** に設定しました！",
                     embed=None,
                     view=None
@@ -362,7 +369,7 @@ class RankButtonView(discord.ui.View):
                     description="該当するティア（1〜3）を選択してください。",
                     color=discord.Color.light_grey()
                 )
-                await interaction.response.edit_message(embed=embed, view=TierButtonView(rank_name, style, emoji))
+                await interaction.edit_original_response(embed=embed, view=TierButtonView(rank_name, style, emoji))
 
         return callback
 
@@ -374,40 +381,46 @@ class CustomView(discord.ui.View):
 
     @discord.ui.button(label="参加する", style=discord.ButtonStyle.green)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         if interaction.user in self.participants:
-            await interaction.response.send_message("すでに参加しています！", ephemeral=True)
+            await interaction.followup.send("すでに参加しています！", ephemeral=True)
             return
         self.participants.append(interaction.user)
-        await interaction.response.send_message(f"{interaction.user.mention} が参加しました！", ephemeral=False)
         self.message = interaction.message
         await update_active_custom_view()
+        await interaction.followup.send(f"{interaction.user.mention} が参加しました！", ephemeral=True)
 
     @discord.ui.button(label="辞退する", style=discord.ButtonStyle.red)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         if interaction.user not in self.participants:
-            await interaction.response.send_message("参加していません。", ephemeral=True)
+            await interaction.followup.send("参加していません。", ephemeral=True)
             return
         self.participants.remove(interaction.user)
-        await interaction.response.send_message(f"{interaction.user.mention} が辞退しました。", ephemeral=False)
         self.message = interaction.message
         await update_active_custom_view()
+        await interaction.followup.send(f"{interaction.user.mention} が辞退しました。", ephemeral=True)
 
     @discord.ui.button(label="均等チーム分け実行", style=discord.ButtonStyle.blurple)
     async def split_teams(self, interaction: discord.Interaction, button: discord.ui.Button):
         if len(self.participants) < 2:
             await interaction.response.send_message("チーム分けには最低2人必要です！", ephemeral=True)
             return
+        await interaction.response.defer()
         embed, result_view = generate_team_embed_and_view(self.participants)
-        await interaction.response.send_message(embed=embed, view=result_view)
+        await interaction.followup.send(embed=embed, view=result_view)
 
     @discord.ui.button(label="ランク設定", style=discord.ButtonStyle.secondary, emoji="⚙️")
     async def set_rank_from_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 3秒制限対策：先に非公開で処理中の合図（defer）を送る
+        await interaction.response.defer(ephemeral=True)
+        
         embed = discord.Embed(
             title="🔰 ランク手動設定",
             description="ご自身の現在のランクボタンをクリックしてください！",
             color=discord.Color.light_grey()
         )
-        await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=RankButtonView(), ephemeral=True)
 
 # --- スラッシュコマンド群 ---
 
