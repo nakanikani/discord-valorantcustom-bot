@@ -33,7 +33,7 @@ supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL
 RANK_ICONS = {
     "アイアン": "🟤", "ブロンズ": "🟤", "シルバー": "⚪",
     "ゴールド": "🟡", "プラチナ": "🔵", "ダイヤ": "🟣",
-    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "🌟", # 修正: 絵文字を1文字に変更
+    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "🌟",
     "Unranked": "❓"
 }
 
@@ -123,7 +123,7 @@ def parse_rank_input(rank_input: str):
     clean_input = rank_input.lower().replace(" ", "").replace("-", "")
     
     if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input or "レディ" in clean_input:
-        return "レディアント", 35, RANK_ICONS.get("レディアント", "🌟") # 修正: 絵文字変更
+        return "レディアント", 35, RANK_ICONS.get("レディアント", "🌟")
 
     match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー一-龠]+)(\d)?", clean_input)
     if not match:
@@ -321,7 +321,6 @@ class RankButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         
-        # 修正: すべてのランクを青色(primary)にし、Unrankedのみ灰色(secondary)に変更
         ranks = [
             ("アイアン", discord.ButtonStyle.primary, 0),
             ("ブロンズ", discord.ButtonStyle.primary, 0),
@@ -367,6 +366,49 @@ class RankButtonView(discord.ui.View):
 
         return callback
 
+# --- IgnoreID入力用のポップアップ画面 ---
+class IgnoreModal(discord.ui.Modal, title='メンバーの除外'):
+    ignore_ids = discord.ui.TextInput(
+        label='除外するIgnoreID（カンマ区切りで複数可）',
+        style=discord.TextStyle.short,
+        placeholder='例: 0, 2',
+        required=True
+    )
+
+    def __init__(self, custom_view):
+        super().__init__()
+        self.custom_view = custom_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # 入力された文字からスペースを消す
+        ids_str = self.ignore_ids.value.replace(" ", "")
+        
+        try:
+            # カンマ区切りで数字のリストにする
+            ids_to_remove = [int(x) for x in ids_str.split(",")]
+        except ValueError:
+            await interaction.response.send_message("⚠️ 数字とカンマだけで入力してください。（例: 0, 2）", ephemeral=True)
+            return
+
+        # リストの後ろの番号から消さないとインデックスがずれるため、降順にソート
+        ids_to_remove.sort(reverse=True)
+        removed_names = []
+        
+        for i in ids_to_remove:
+            if 0 <= i < len(self.custom_view.participants):
+                p = self.custom_view.participants.pop(i)
+                removed_names.append(p.display_name)
+        
+        # パネルの表示を更新
+        global active_view
+        await update_active_custom_view()
+        
+        if removed_names:
+            await interaction.response.send_message(f"🗑️ 以下のメンバーを除外しました: {', '.join(removed_names)}", ephemeral=True)
+        else:
+            await interaction.response.send_message("⚠️ 指定されたIDのメンバーが見つかりませんでした。", ephemeral=True)
+
+
 class CustomView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -406,7 +448,6 @@ class CustomView(discord.ui.View):
 
     @discord.ui.button(label="ランク設定", style=discord.ButtonStyle.secondary, emoji="⚙️")
     async def set_rank_from_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 最初の「ランク設定」ボタンを押したときは ephemeral (自分だけに見える) メッセージで送信する
         embed = discord.Embed(
             title="🔰 ランク手動設定",
             description="ご自身の現在のランクボタンをクリックしてください！",
@@ -414,11 +455,17 @@ class CustomView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
+    @discord.ui.button(label="IDで除外", style=discord.ButtonStyle.gray, emoji="🗑️")
+    async def remove_by_id(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.participants:
+            await interaction.response.send_message("現在参加者がいないため、除外できません。", ephemeral=True)
+            return
+        await interaction.response.send_modal(IgnoreModal(self))
+
 # --- スラッシュコマンド群 ---
 
 @bot.event
 async def on_ready():
-    # 修正: 起動ごとに同期すると制限に引っかかるのでコメントアウト
     # await bot.tree.sync() 
     print(f"Logged in as {bot.user.name}")
     print("✅ 起動しました（コマンドの同期はスキップしました）")
@@ -535,7 +582,7 @@ async def rankpanel(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
 @bot.tree.command(name="myrank", description="現在の自分の登録情報を確認します")
-async def myrank(interaction: discord.Interaction):
+async defmyrank(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     data = get_user_data(interaction.user.id, auto_refresh=True)
     if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
