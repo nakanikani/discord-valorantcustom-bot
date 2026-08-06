@@ -30,7 +30,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 # --- ランク定義とデフォルト絵文字 ---
-# ※カスタムアイコンを使わない間はデフォルトの丸絵文字などを使用します
 RANK_ICONS = {
     "アイアン": "🟤", "ブロンズ": "🟤", "シルバー": "⚪",
     "ゴールド": "🟡", "プラチナ": "🔵", "ダイヤ": "🟣",
@@ -222,7 +221,7 @@ async def update_active_custom_view():
         embed = discord.Embed(
             title="🎮 VALORANT カスタム募集",
             description=description_text,
-            color=0x2b2d31  # Boom Bot風のダークカラー
+            color=0x2b2d31
         )
         embed.set_footer(text=f"現在の参加人数: {len(active_view.participants)}人")
 
@@ -272,9 +271,56 @@ class MatchResultView(discord.ui.View):
     async def win_b(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_match_end(interaction, self.team_b, self.team_a, "🏆 試合結果: 🔵 チームB 勝利！")
 
+# --- ティアを選択する用のボタンパネル（2段階目） ---
+class TierButtonView(discord.ui.View):
+    def __init__(self, rank_name, rank_style, rank_emoji):
+        super().__init__(timeout=None)
+        self.rank_name = rank_name
+        self.rank_style = rank_style
+        self.rank_emoji = rank_emoji
+
+        for tier in [1, 2, 3]:
+            btn = discord.ui.Button(label=f"{rank_name} {tier}", style=rank_style, emoji=rank_emoji)
+            btn.callback = self.make_callback(tier)
+            self.add_item(btn)
+        
+        back_btn = discord.ui.Button(label="戻る", style=discord.ButtonStyle.secondary, row=1)
+        back_btn.callback = self.go_back
+        self.add_item(back_btn)
+
+    def make_callback(self, tier):
+        async def callback(interaction: discord.Interaction):
+            target_rank = f"{self.rank_name}{tier}"
+            name, rating, icon = parse_rank_input(target_rank)
+            
+            old_data = get_user_data(interaction.user.id, auto_refresh=False)
+            save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
+            
+            await interaction.response.edit_message(
+                content=f"✅ ランクを {icon} **{name}** に設定しました！",
+                embed=None,
+                view=None
+            )
+            
+            global active_view
+            if active_view and interaction.user in active_view.participants:
+                await update_active_custom_view()
+
+        return callback
+
+    async def go_back(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🔰 ランク手動設定",
+            description="ご自身の現在のランクボタンをクリックしてください！",
+            color=discord.Color.light_grey()
+        )
+        await interaction.response.edit_message(embed=embed, view=RankButtonView())
+
+# --- ランクを選択する用のボタンパネル（1段階目） ---
 class RankButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        
         ranks = [
             ("アイアン", discord.ButtonStyle.secondary, 0),
             ("ブロンズ", discord.ButtonStyle.secondary, 0),
@@ -289,23 +335,34 @@ class RankButtonView(discord.ui.View):
         ]
         
         for name, style, row in ranks:
-            btn = discord.ui.Button(label=name, style=style, row=row)
-            btn.callback = self.make_callback(name)
+            emoji = RANK_ICONS.get(name, "❓")
+            btn = discord.ui.Button(label=name, emoji=emoji, style=style, row=row)
+            btn.callback = self.make_callback(name, style, emoji)
             self.add_item(btn)
 
-    def make_callback(self, rank_name):
+    def make_callback(self, rank_name, style, emoji):
         async def callback(interaction: discord.Interaction):
-            target_rank = rank_name + "1" if rank_name not in ["レディアント", "Unranked"] else rank_name
-            name, rating, icon = parse_rank_input(target_rank)
-            
-            old_data = get_user_data(interaction.user.id, auto_refresh=False)
-            save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
-            
-            await interaction.response.send_message(f"✅ ランクを {icon} **{name}** に設定しました！", ephemeral=True)
-            
-            global active_view
-            if active_view and interaction.user in active_view.participants:
-                await update_active_custom_view()
+            if rank_name in ["レディアント", "Unranked"]:
+                name, rating, icon = parse_rank_input(rank_name)
+                old_data = get_user_data(interaction.user.id, auto_refresh=False)
+                save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
+                
+                await interaction.response.edit_message(
+                    content=f"✅ ランクを {icon} **{name}** に設定しました！",
+                    embed=None,
+                    view=None
+                )
+                
+                global active_view
+                if active_view and interaction.user in active_view.participants:
+                    await update_active_custom_view()
+            else:
+                embed = discord.Embed(
+                    title=f"{emoji} {rank_name} のティアを選択",
+                    description="該当するティア（1〜3）を選択してください。",
+                    color=discord.Color.light_grey()
+                )
+                await interaction.response.edit_message(embed=embed, view=TierButtonView(rank_name, style, emoji))
 
         return callback
 
@@ -343,7 +400,6 @@ class CustomView(discord.ui.View):
         embed, result_view = generate_team_embed_and_view(self.participants)
         await interaction.response.send_message(embed=embed, view=result_view)
 
-    # パネルに内蔵した「ランク設定」ボタン
     @discord.ui.button(label="ランク設定", style=discord.ButtonStyle.secondary, emoji="⚙️")
     async def set_rank_from_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
@@ -351,7 +407,6 @@ class CustomView(discord.ui.View):
             description="ご自身の現在のランクボタンをクリックしてください！",
             color=discord.Color.light_grey()
         )
-        # ephemeral=True をつけることで、押した本人にだけひっそりと設定画面を見せます
         await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
 # --- スラッシュコマンド群 ---
