@@ -6,6 +6,7 @@ from collections import defaultdict
 from flask import Flask
 import discord
 from discord.ext import commands
+from discord import app_commands
 import supabase
 
 # --- Render対策: Keep Alive 用 Webサーバー ---
@@ -27,6 +28,34 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️ SUPABASE_URL または SUPABASE_KEY が環境変数に設定されていません！")
 
 supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+# --- ランク定義とデフォルト絵文字 ---
+# ※カスタムアイコンを使わない間はデフォルトの丸絵文字などを使用します
+RANK_ICONS = {
+    "アイアン": "🟤", "ブロンズ": "🟤", "シルバー": "⚪",
+    "ゴールド": "🟡", "プラチナ": "🔵", "ダイヤ": "🟣",
+    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "🟡✨",
+    "Unranked": "❓"
+}
+
+RANK_ALIASES = {
+    "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
+    "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ", "ブロ": "ブロンズ",
+    "silver": "シルバー", "s": "シルバー", "シルバー": "シルバー", "シル": "シルバー",
+    "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド", "ゴル": "ゴールド",
+    "platinum": "プラチナ", "plat": "プラチナ", "p": "プラチナ", "プラチナ": "プラチナ", "プラ": "プラチナ",
+    "diamond": "ダイヤ", "dia": "ダイヤ", "d": "ダイヤ", "ダイヤ": "ダイヤ",
+    "ascendant": "アセンダント", "asc": "アセンダント", "ase": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント", "アセ": "アセンダント", "汗": "アセンダント",
+    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "imo": "イモータル", "イモータル": "イモータル", "イモ": "イモータル", "芋": "イモータル",
+    "radiant": "レディアント", "rad": "レディアント", "r": "レディアント", "レディアント": "レディアント", "レディ": "レディアント",
+    "unranked": "Unranked", "ur": "Unranked", "アンランク": "Unranked"
+}
+
+BASE_RATING = {
+    "アイアン": 1, "ブロンズ": 4, "シルバー": 7, "ゴールド": 10, 
+    "プラチナ": 13, "ダイヤ": 16, "アセンダント": 19, "イモータル": 22,
+    "レディアント": 35, "Unranked": 8
+}
 
 # --- データベース操作関数 ---
 
@@ -56,8 +85,8 @@ def update_user_rating(user_id: int, diff: int):
     return new_rating
 
 def get_user_data(user_id: int, auto_refresh: bool = False):
-    """登録されているデータを取得。"""
-    default_data = {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": "❓"}
+    default_icon = RANK_ICONS.get("Unranked", "❓")
+    default_data = {"riot_id": "未登録", "rank": "Unranked", "rating": 8, "icon": default_icon}
     if not supabase_db:
         return default_data
 
@@ -75,7 +104,9 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
     riot_id = row.get("riot_id") or "未登録"
     rank_name = row.get("rank_name") or "Unranked"
     rating = row.get("rating", 8)
-    icon = row.get("icon") or "❓"
+    
+    base_rank_key = re.sub(r'\d+', '', rank_name)
+    icon = RANK_ICONS.get(base_rank_key, RANK_ICONS.get(rank_name, default_icon))
 
     if auto_refresh and riot_id != "未登録":
         new_rank, new_rating, new_icon = fetch_valorant_rank(riot_id)
@@ -85,79 +116,25 @@ def get_user_data(user_id: int, auto_refresh: bool = False):
 
     return {"riot_id": riot_id, "rank": rank_name, "rating": rating, "icon": icon}
 
-# --- Discord Bot 設定 ---
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-active_view = None
-
-RANK_ALIASES = {
-    # アイアン
-    "iron": "アイアン", "i": "アイアン", "アイアン": "アイアン",
-    # ブロンズ
-    "bronze": "ブロンズ", "b": "ブロンズ", "ブロンズ": "ブロンズ", "ブロ": "ブロンズ",
-    # シルバー
-    "silver": "シルバー", "s": "シルバー", "シルバー": "シルバー", "シル": "シルバー",
-    # ゴールド
-    "gold": "ゴールド", "g": "ゴールド", "ゴールド": "ゴールド", "ゴル": "ゴールド",
-    # プラチナ
-    "platinum": "プラチナ", "plat": "プラチナ", "p": "プラチナ", "プラチナ": "プラチナ", "プラ": "プラチナ",
-    # ダイヤ
-    "diamond": "ダイヤ", "dia": "ダイヤ", "d": "ダイヤ", "ダイヤ": "ダイヤ",
-    # アセンダント
-    "ascendant": "アセンダント", "asc": "アセンダント", "ase": "アセンダント", "a": "アセンダント", "アセンダント": "アセンダント", "アセ": "アセンダント", "汗": "アセンダント",
-    # イモータル
-    "immortal": "イモータル", "immo": "イモータル", "imm": "イモータル", "imo": "イモータル", "イモータル": "イモータル", "イモ": "イモータル", "芋": "イモータル",
-    # レディアント
-    "radiant": "レディアント", "rad": "レディアント", "r": "レディアント", "レディアント": "レディアント", "レディ": "レディアント",
-    # アンランク
-    "unranked": "Unranked", "ur": "Unranked", "アンランク": "Unranked"
-}
-
-RANK_ICONS = {
-    "アイアン": "🔘",
-    "ブロンズ": "🟤",
-    "シルバー": "⚪",
-    "ゴールド": "🟡",
-    "プラチナ": "🔵",
-    "ダイヤ": "🟣",
-    "アセンダント": "🟢",
-    "イモータル": "🔴",
-    "レディアント": "🟡✨",
-    "Unranked": "❓"
-}
-
-BASE_RATING = {
-    "アイアン": 1,
-    "ブロンズ": 4,
-    "シルバー": 7,
-    "ゴールド": 10, 
-    "プラチナ": 13,
-    "ダイヤ": 16,
-    "アセンダント": 19,
-    "イモータル": 22,
-    "レディアント": 35,
-    "Unranked": 8
-}
+# --- 解析・取得関数 ---
 
 def parse_rank_input(rank_input: str):
     if not rank_input:
-        return "Unranked", 8, "❓"
+        return "Unranked", 8, RANK_ICONS.get("Unranked", "❓")
     clean_input = rank_input.lower().replace(" ", "").replace("-", "")
     
     if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input or "レディ" in clean_input:
-        return "レディアント", 35, "🟡✨"
+        return "レディアント", 35, RANK_ICONS.get("レディアント", "🟡✨")
 
     match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー一-龠]+)(\d)?", clean_input)
     if not match:
-        return "Unranked", 8, "❓"
+        return "Unranked", 8, RANK_ICONS.get("Unranked", "❓")
     
     name_part, tier_part = match.groups()
     tier = int(tier_part) if tier_part and tier_part in ["1", "2", "3"] else 1
     matched_rank = RANK_ALIASES.get(name_part)
     if not matched_rank:
-        return "Unranked", 8, "❓"
+        return "Unranked", 8, RANK_ICONS.get("Unranked", "❓")
 
     icon = RANK_ICONS.get(matched_rank, "❓")
     if matched_rank == "Unranked":
@@ -170,8 +147,7 @@ def parse_rank_input(rank_input: str):
     else:
         rating = BASE_RATING[matched_rank] + (tier - 1)
 
-    formatted_name = f"{matched_rank}{tier}"
-    return formatted_name, rating, icon
+    return f"{matched_rank}{tier}", rating, icon
 
 def fetch_valorant_rank(riot_id):
     if not riot_id or "#" not in riot_id:
@@ -191,6 +167,14 @@ def fetch_valorant_rank(riot_id):
     except Exception as e:
         print(f"Fetch Error: {e}")
     return None, None, None
+
+# --- Bot 本体定義 ---
+
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+active_view = None
 
 def generate_team_embed_and_view(participants):
     players = participants.copy()
@@ -214,10 +198,41 @@ def generate_team_embed_and_view(participants):
     embed.add_field(name="🔴 チーム A", value=fmt_team(team_a), inline=True)
     embed.add_field(name="🔵 チーム B", value=fmt_team(team_b), inline=True)
 
-    result_view = MatchResultView(team_a, team_b, participants)
-    return embed, result_view
+    return embed, MatchResultView(team_a, team_b, participants)
 
-# --- 勝敗入力用 View ---
+# --- Boom Bot風パネルの更新処理 ---
+async def update_active_custom_view():
+    global active_view
+    if active_view and active_view.message:
+        if active_view.participants:
+            lines = []
+            for i, p in enumerate(active_view.participants):
+                info = get_user_data(p.id, auto_refresh=False)
+                lines.append(f"{i} - {info['icon']} {p.mention}")
+            member_list = "\n".join(lines)
+        else:
+            member_list = "参加者がいません"
+
+        description_text = (
+            f"**IgnoreID**\n"
+            f"{member_list}\n\n"
+            f"✓ IgnoreIDを使用すると、指定のメンバーを除外した状態でチーム分けができます。"
+        )
+
+        embed = discord.Embed(
+            title="🎮 VALORANT カスタム募集",
+            description=description_text,
+            color=0x2b2d31  # Boom Bot風のダークカラー
+        )
+        embed.set_footer(text=f"現在の参加人数: {len(active_view.participants)}人")
+
+        try:
+            await active_view.message.edit(embed=embed, view=active_view)
+        except discord.NotFound:
+            active_view = None
+
+# --- UI View クラス ---
+
 class MatchResultView(discord.ui.View):
     def __init__(self, team_a, team_b, all_participants):
         super().__init__(timeout=None)
@@ -257,11 +272,48 @@ class MatchResultView(discord.ui.View):
     async def win_b(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.handle_match_end(interaction, self.team_b, self.team_a, "🏆 試合結果: 🔵 チームB 勝利！")
 
-# --- カスタム募集用 View ---
+class RankButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        ranks = [
+            ("アイアン", discord.ButtonStyle.secondary, 0),
+            ("ブロンズ", discord.ButtonStyle.secondary, 0),
+            ("シルバー", discord.ButtonStyle.secondary, 0),
+            ("ゴールド", discord.ButtonStyle.primary, 0),
+            ("プラチナ", discord.ButtonStyle.primary, 0),
+            ("ダイヤ", discord.ButtonStyle.primary, 1),
+            ("アセンダント", discord.ButtonStyle.success, 1),
+            ("イモータル", discord.ButtonStyle.danger, 1),
+            ("レディアント", discord.ButtonStyle.danger, 1),
+            ("Unranked", discord.ButtonStyle.secondary, 2)
+        ]
+        
+        for name, style, row in ranks:
+            btn = discord.ui.Button(label=name, style=style, row=row)
+            btn.callback = self.make_callback(name)
+            self.add_item(btn)
+
+    def make_callback(self, rank_name):
+        async def callback(interaction: discord.Interaction):
+            target_rank = rank_name + "1" if rank_name not in ["レディアント", "Unranked"] else rank_name
+            name, rating, icon = parse_rank_input(target_rank)
+            
+            old_data = get_user_data(interaction.user.id, auto_refresh=False)
+            save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
+            
+            await interaction.response.send_message(f"✅ ランクを {icon} **{name}** に設定しました！", ephemeral=True)
+            
+            global active_view
+            if active_view and interaction.user in active_view.participants:
+                await update_active_custom_view()
+
+        return callback
+
 class CustomView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.participants = []
+        self.message = None
 
     @discord.ui.button(label="参加する", style=discord.ButtonStyle.green)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -270,7 +322,8 @@ class CustomView(discord.ui.View):
             return
         self.participants.append(interaction.user)
         await interaction.response.send_message(f"{interaction.user.mention} が参加しました！", ephemeral=False)
-        await self.update_embed(interaction)
+        self.message = interaction.message
+        await update_active_custom_view()
 
     @discord.ui.button(label="辞退する", style=discord.ButtonStyle.red)
     async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -279,52 +332,62 @@ class CustomView(discord.ui.View):
             return
         self.participants.remove(interaction.user)
         await interaction.response.send_message(f"{interaction.user.mention} が辞退しました。", ephemeral=False)
-        await self.update_embed(interaction)
+        self.message = interaction.message
+        await update_active_custom_view()
 
     @discord.ui.button(label="均等チーム分け実行", style=discord.ButtonStyle.blurple)
     async def split_teams(self, interaction: discord.Interaction, button: discord.ui.Button):
         if len(self.participants) < 2:
             await interaction.response.send_message("チーム分けには最低2人必要です！", ephemeral=True)
             return
-
         embed, result_view = generate_team_embed_and_view(self.participants)
         await interaction.response.send_message(embed=embed, view=result_view)
 
-    async def update_embed(self, interaction: discord.Interaction):
-        lines = []
-        for p in self.participants:
-            info = get_user_data(p.id, auto_refresh=False)
-            lines.append(f"• {info['icon']} {p.display_name} [{info['rank']}]")
-        
-        member_list = "\n".join(lines) or "なし"
+    # パネルに内蔵した「ランク設定」ボタン
+    @discord.ui.button(label="ランク設定", style=discord.ButtonStyle.secondary, emoji="⚙️")
+    async def set_rank_from_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
-            title="🎮 VALORANT カスタム募集",
-            description=f"**【参加者一覧】 ({len(self.participants)}人)**\n{member_list}",
-            color=discord.Color.blue()
+            title="🔰 ランク手動設定",
+            description="ご自身の現在のランクボタンをクリックしてください！",
+            color=discord.Color.light_grey()
         )
-        await interaction.message.edit(embed=embed, view=self)
+        # ephemeral=True をつけることで、押した本人にだけひっそりと設定画面を見せます
+        await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
-# --- コマンド群 ---
+# --- スラッシュコマンド群 ---
+
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f"Logged in as {bot.user.name}")
+    print("✅ スラッシュコマンドの同期が完了しました")
 
-@bot.command()
-async def custom(ctx):
+@bot.tree.command(name="custom", description="カスタム募集パネルを表示します")
+async def custom(interaction: discord.Interaction):
     global active_view
     active_view = CustomView()
+    
+    description_text = (
+        f"**IgnoreID**\n"
+        f"参加者がいません\n\n"
+        f"✓ IgnoreIDを使用すると、指定のメンバーを除外した状態でチーム分けができます。"
+    )
+    
     embed = discord.Embed(
         title="🎮 VALORANT カスタム募集",
-        description="**【参加者一覧】 (0人)**\nなし",
-        color=discord.Color.blue()
+        description=description_text,
+        color=0x2b2d31
     )
-    await ctx.send(embed=embed, view=active_view)
+    embed.set_footer(text="現在の参加人数: 0人")
 
-@bot.command()
-async def members(ctx):
+    await interaction.response.send_message(embed=embed, view=active_view)
+    active_view.message = await interaction.original_response()
+
+@bot.tree.command(name="members", description="現在の参加メンバーのランク別分布を表示します")
+async def members(interaction: discord.Interaction):
     global active_view
     if not active_view or not active_view.participants:
-        await ctx.send("❓ 現在参加しているメンバーはいません。")
+        await interaction.response.send_message("❓ 現在参加しているメンバーはいません。", ephemeral=True)
         return
 
     rank_groups = defaultdict(list)
@@ -343,17 +406,16 @@ async def members(ctx):
             value=f"└ {', '.join(names)}",
             inline=False
         )
+    
+    await interaction.response.send_message(embed=embed, view=active_view)
+    active_view.message = await interaction.original_response()
 
-    # 独立した新しいCustomViewを作成してボタンを表示
-    new_view = CustomView()
-    new_view.participants = active_view.participants
-    active_view = new_view  # グローバル参照を最新Viewに更新
-
-    await ctx.send(embed=embed, view=new_view)
-
-@bot.command()
-async def register(ctx, riot_id: str):
+@bot.tree.command(name="register", description="Riot IDから自動でランクを取得して登録します")
+@app_commands.describe(riot_id="登録するRiot ID (例: 名前#TAG)")
+async def register(interaction: discord.Interaction, riot_id: str):
+    await interaction.response.defer()
     rank_name, rating, icon = fetch_valorant_rank(riot_id)
+    
     if not rank_name:
         embed = discord.Embed(
             title="⚠️ ランク情報を自動取得できませんでした",
@@ -361,99 +423,82 @@ async def register(ctx, riot_id: str):
             color=discord.Color.gold()
         )
         embed.add_field(
-            name="🔓 公開設定にする手順（Tracker.gg）",
-            value=(
-                "1. [Tracker.gg](https://tracker.gg/valorant) にアクセス\n"
-                "2. 右上の **「Sign in with Riot Games」** からログイン\n"
-                "3. ログイン後、プロフィールを **「Public (公開)」** に変更\n"
-                "※設定後、再度 `!register` をお試しください。"
-            ),
-            inline=False
-        )
-        embed.add_field(
             name="💡 手動で登録する場合",
-            value=f"`!setrank ランク名` で直接登録できます！\n（例: `!setrank immo1`, `!setrank ダイヤ2`）",
+            value=f"パネルの「⚙️ ランク設定」ボタンか、\n`/setrank ランク名` で直接登録できます！",
             inline=False
         )
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
         return
 
-    old_data = get_user_data(ctx.author.id, auto_refresh=False)
-    save_user_data(ctx.author.id, riot_id, rank_name, rating, icon)
+    old_data = get_user_data(interaction.user.id, auto_refresh=False)
+    save_user_data(interaction.user.id, riot_id, rank_name, rating, icon)
 
     if old_data["rank"] != "Unranked":
-        await ctx.send(
-            f"🔄 {ctx.author.mention} さんの登録情報を更新しました！\n"
-            f"• Riot ID: `{riot_id}`\n"
-            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+        await interaction.followup.send(
+            f"🔄 {interaction.user.mention} さんの登録情報を更新しました！\n"
+            f"・ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
         )
     else:
-        await ctx.send(f"✅ {ctx.author.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
+        await interaction.followup.send(f"✅ {interaction.user.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
 
-@bot.command()
-async def setrank(ctx, *, rank_input: str):
+@bot.tree.command(name="setrank", description="ランクを手動で直接設定します")
+@app_commands.describe(rank_input="ランクの入力 (例: immo1, ダイヤ2, プラチナ)")
+async def setrank(interaction: discord.Interaction, rank_input: str):
     rank_name, rating, icon = parse_rank_input(rank_input)
     if not rank_name or rank_name == "Unranked":
-        await ctx.send("⚠️ ランクを認識できませんでした。\n入力例: `!setrank immo3`, `!setrank 汗1`, `!setrank 芋2`")
+        await interaction.response.send_message("⚠️ ランクを認識できませんでした。\n入力例: `/setrank immo3`, `/setrank 汗1`, `/setrank 芋2`", ephemeral=True)
         return
     
-    old_data = get_user_data(ctx.author.id, auto_refresh=False)
-    save_user_data(ctx.author.id, old_data["riot_id"], rank_name, rating, icon)
+    old_data = get_user_data(interaction.user.id, auto_refresh=False)
+    save_user_data(interaction.user.id, old_data["riot_id"], rank_name, rating, icon)
 
     global active_view
-    if active_view and ctx.author in active_view.participants:
-        lines = []
-        for p in active_view.participants:
-            info = get_user_data(p.id, auto_refresh=False)
-            lines.append(f"• {info['icon']} {p.display_name} [{info['rank']}]")
-        
-        member_list = "\n".join(lines) or "なし"
-        embed = discord.Embed(
-            title="🎮 VALORANT カスタム募集",
-            description=f"**【参加者一覧】 ({len(active_view.participants)}人)**\n{member_list}",
-            color=discord.Color.blue()
-        )
-        try:
-            async for message in ctx.channel.history(limit=10):
-                if message.author == bot.user and message.embeds and "VALORANT カスタム募集" in message.embeds[0].title:
-                    await message.edit(embed=embed, view=active_view)
-                    break
-        except Exception:
-            pass
+    if active_view and interaction.user in active_view.participants:
+        await update_active_custom_view()
 
     if old_data["rank"] != "Unranked":
-        await ctx.send(
-            f"✏️ {ctx.author.mention} さんのランクを更新しました！\n"
-            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+        await interaction.response.send_message(
+            f"✏️ {interaction.user.mention} さんのランクを更新しました！\n"
+            f"・ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
         )
     else:
-        await ctx.send(f"✏️ {ctx.author.mention} さんのランクを {icon} **{rank_name}** に設定しました！（内部レート: {rating}pt）")
+        await interaction.response.send_message(f"✏️ {interaction.user.mention} さんのランクを {icon} **{rank_name}** に設定しました！（内部レート: {rating}pt）")
 
-@bot.command()
-async def myrank(ctx):
-    data = get_user_data(ctx.author.id, auto_refresh=True)
+@bot.tree.command(name="rankpanel", description="ボタンで簡単にランクを設定できるパネルを個別で表示します")
+async def rankpanel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🔰 ランク手動設定パネル",
+        description="ご自身のランクのボタンをクリックしてください！",
+        color=discord.Color.brand_green()
+    )
+    await interaction.response.send_message(embed=embed, view=RankButtonView())
+
+@bot.tree.command(name="myrank", description="現在の自分の登録情報を確認します")
+async def myrank(interaction: discord.Interaction):
+    await interaction.response.defer()
+    data = get_user_data(interaction.user.id, auto_refresh=True)
     if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
-        await ctx.send(f"❓ {ctx.author.mention} さんのランク情報はまだ登録されていません。")
+        await interaction.followup.send(f"❓ {interaction.user.mention} さんのランク情報はまだ登録されていません。")
     else:
-        await ctx.send(
-            f"👤 {ctx.author.mention} さんの登録情報:\n"
+        await interaction.followup.send(
+            f"👤 {interaction.user.mention} さんの登録情報:\n"
             f"• Riot ID: `{data['riot_id']}`\n"
             f"• 現在のランク: {data['icon']} **{data['rank']}** (内部レート: {data['rating']}pt)"
         )
 
-@bot.command()
-async def valocus(ctx):
+@bot.tree.command(name="valocus", description="コマンド一覧とヘルプを表示します")
+async def valocus(interaction: discord.Interaction):
     embed = discord.Embed(title="🎮 VALOcus ボット コマンドヘルプ", color=discord.Color.green())
-    embed.add_field(name="`!custom`", value="カスタム募集パネルを表示します。", inline=False)
-    embed.add_field(name="`!members`", value="参加者のランク別分布を表示します。", inline=False)
-    embed.add_field(name="`!register 名前#TAG`", value="Riot IDを入力して自動取得します。", inline=False)
-    embed.add_field(name="`!setrank ランク`", value="手動でランクを設定します。", inline=False)
-    embed.add_field(name="`!myrank`", value="自分の登録情報を確認します。", inline=False)
-    await ctx.send(embed=embed)
+    embed.add_field(name="`/custom`", value="カスタム募集パネルを表示します。（パネルから直接ランク設定も可能）", inline=False)
+    embed.add_field(name="`/members`", value="参加者のランク別分布を表示します。", inline=False)
+    embed.add_field(name="`/register [Riot ID]`", value="Riot IDを入力して自動取得します。", inline=False)
+    embed.add_field(name="`/setrank [ランク]`", value="テキストで手動でランクを設定します。", inline=False)
+    embed.add_field(name="`/myrank`", value="自分の登録情報を確認します。", inline=False)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def ping(ctx):
-    await ctx.send("pong!")
+@bot.tree.command(name="ping", description="Botの応答を確認します")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("pong!")
 
 keep_alive()
 TOKEN = os.environ.get("DISCORD_TOKEN")
