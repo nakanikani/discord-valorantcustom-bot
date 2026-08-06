@@ -33,7 +33,7 @@ supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL
 RANK_ICONS = {
     "アイアン": "🟤", "ブロンズ": "🟤", "シルバー": "⚪",
     "ゴールド": "🟡", "プラチナ": "🔵", "ダイヤ": "🟣",
-    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "✨",
+    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "🌟", # 修正: 絵文字を1文字に変更
     "Unranked": "❓"
 }
 
@@ -123,7 +123,7 @@ def parse_rank_input(rank_input: str):
     clean_input = rank_input.lower().replace(" ", "").replace("-", "")
     
     if "radiant" in clean_input or "rad" in clean_input or "レディアント" in clean_input or "レディ" in clean_input:
-        return "レディアント", 35, RANK_ICONS.get("レディアント", "🟡✨")
+        return "レディアント", 35, RANK_ICONS.get("レディアント", "🌟") # 修正: 絵文字変更
 
     match = re.match(r"([a-zぁ-んァ-ヶＡ-Ｚａ-ｚー一-龠]+)(\d)?", clean_input)
     if not match:
@@ -321,16 +321,17 @@ class RankButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         
+        # 修正: すべてのランクを青色(primary)にし、Unrankedのみ灰色(secondary)に変更
         ranks = [
-            ("アイアン", discord.ButtonStyle.secondary, 0),
-            ("ブロンズ", discord.ButtonStyle.secondary, 0),
-            ("シルバー", discord.ButtonStyle.secondary, 0),
+            ("アイアン", discord.ButtonStyle.primary, 0),
+            ("ブロンズ", discord.ButtonStyle.primary, 0),
+            ("シルバー", discord.ButtonStyle.primary, 0),
             ("ゴールド", discord.ButtonStyle.primary, 0),
             ("プラチナ", discord.ButtonStyle.primary, 0),
             ("ダイヤ", discord.ButtonStyle.primary, 1),
-            ("アセンダント", discord.ButtonStyle.success, 1),
-            ("イモータル", discord.ButtonStyle.danger, 1),
-            ("レディアント", discord.ButtonStyle.danger, 1),
+            ("アセンダント", discord.ButtonStyle.primary, 1),
+            ("イモータル", discord.ButtonStyle.primary, 1),
+            ("レディアント", discord.ButtonStyle.primary, 1),
             ("Unranked", discord.ButtonStyle.secondary, 2)
         ]
         
@@ -417,9 +418,10 @@ class CustomView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    # 修正: 起動ごとに同期すると制限に引っかかるのでコメントアウト
+    # await bot.tree.sync() 
     print(f"Logged in as {bot.user.name}")
-    print("✅ スラッシュコマンドの同期が完了しました")
+    print("✅ 起動しました（コマンドの同期はスキップしました）")
 
 @bot.tree.command(name="custom", description="カスタム募集パネルを表示します")
 async def custom(interaction: discord.Interaction):
