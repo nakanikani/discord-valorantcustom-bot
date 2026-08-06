@@ -290,16 +290,13 @@ class TierButtonView(discord.ui.View):
 
     def make_callback(self, tier):
         async def callback(interaction: discord.Interaction):
-            # タイムアウト回避の遅延応答
-            await interaction.response.defer()
-            
             target_rank = f"{self.rank_name}{tier}"
             name, rating, icon = parse_rank_input(target_rank)
             
             old_data = get_user_data(interaction.user.id, auto_refresh=False)
             save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
             
-            await interaction.edit_original_response(
+            await interaction.response.edit_message(
                 content=f"✅ ランクを {icon} **{name}** に設定しました！",
                 embed=None,
                 view=None
@@ -312,13 +309,12 @@ class TierButtonView(discord.ui.View):
         return callback
 
     async def go_back(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         embed = discord.Embed(
             title="🔰 ランク手動設定",
             description="ご自身の現在のランクボタンをクリックしてください！",
             color=discord.Color.light_grey()
         )
-        await interaction.edit_original_response(embed=embed, view=RankButtonView())
+        await interaction.response.edit_message(embed=embed, view=RankButtonView())
 
 # --- ランクを選択する用のボタンパネル（1段階目） ---
 class RankButtonView(discord.ui.View):
@@ -346,15 +342,12 @@ class RankButtonView(discord.ui.View):
 
     def make_callback(self, rank_name, style, emoji):
         async def callback(interaction: discord.Interaction):
-            # タイムアウト回避の遅延応答
-            await interaction.response.defer()
-            
             if rank_name in ["レディアント", "Unranked"]:
                 name, rating, icon = parse_rank_input(rank_name)
                 old_data = get_user_data(interaction.user.id, auto_refresh=False)
                 save_user_data(interaction.user.id, old_data["riot_id"], name, rating, icon)
                 
-                await interaction.edit_original_response(
+                await interaction.response.edit_message(
                     content=f"✅ ランクを {icon} **{name}** に設定しました！",
                     embed=None,
                     view=None
@@ -369,7 +362,7 @@ class RankButtonView(discord.ui.View):
                     description="該当するティア（1〜3）を選択してください。",
                     color=discord.Color.light_grey()
                 )
-                await interaction.edit_original_response(embed=embed, view=TierButtonView(rank_name, style, emoji))
+                await interaction.response.edit_message(embed=embed, view=TierButtonView(rank_name, style, emoji))
 
         return callback
 
@@ -412,15 +405,13 @@ class CustomView(discord.ui.View):
 
     @discord.ui.button(label="ランク設定", style=discord.ButtonStyle.secondary, emoji="⚙️")
     async def set_rank_from_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 3秒制限対策：先に非公開で処理中の合図（defer）を送る
-        await interaction.response.defer(ephemeral=True)
-        
+        # 最初の「ランク設定」ボタンを押したときは ephemeral (自分だけに見える) メッセージで送信する
         embed = discord.Embed(
             title="🔰 ランク手動設定",
             description="ご自身の現在のランクボタンをクリックしてください！",
             color=discord.Color.light_grey()
         )
-        await interaction.followup.send(embed=embed, view=RankButtonView(), ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
 # --- スラッシュコマンド群 ---
 
@@ -504,7 +495,7 @@ async def register(interaction: discord.Interaction, riot_id: str):
     if old_data["rank"] != "Unranked":
         await interaction.followup.send(
             f"🔄 {interaction.user.mention} さんの登録情報を更新しました！\n"
-            f"・ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
         )
     else:
         await interaction.followup.send(f"✅ {interaction.user.mention} さんの Riot ID (`{riot_id}`) を登録しました！（取得ランク: {icon} **{rank_name}** / {rating}pt）")
@@ -527,7 +518,7 @@ async def setrank(interaction: discord.Interaction, rank_input: str):
     if old_data["rank"] != "Unranked":
         await interaction.response.send_message(
             f"✏️ {interaction.user.mention} さんのランクを更新しました！\n"
-            f"・ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
+            f"• ランク: {old_data['icon']} **{old_data['rank']}** ➔ {icon} **{rank_name}** ({rating}pt)"
         )
     else:
         await interaction.response.send_message(f"✏️ {interaction.user.mention} さんのランクを {icon} **{rank_name}** に設定しました！（内部レート: {rating}pt）")
@@ -539,19 +530,20 @@ async def rankpanel(interaction: discord.Interaction):
         description="ご自身のランクのボタンをクリックしてください！",
         color=discord.Color.brand_green()
     )
-    await interaction.response.send_message(embed=embed, view=RankButtonView())
+    await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
 @bot.tree.command(name="myrank", description="現在の自分の登録情報を確認します")
 async def myrank(interaction: discord.Interaction):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     data = get_user_data(interaction.user.id, auto_refresh=True)
     if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
-        await interaction.followup.send(f"❓ {interaction.user.mention} さんのランク情報はまだ登録されていません。")
+        await interaction.followup.send(f"❓ {interaction.user.mention} さんのランク情報はまだ登録されていません。", ephemeral=True)
     else:
         await interaction.followup.send(
             f"👤 {interaction.user.mention} さんの登録情報:\n"
             f"• Riot ID: `{data['riot_id']}`\n"
-            f"• 現在のランク: {data['icon']} **{data['rank']}** (内部レート: {data['rating']}pt)"
+            f"• 現在のランク: {data['icon']} **{data['rank']}** (内部レート: {data['rating']}pt)",
+            ephemeral=True
         )
 
 @bot.tree.command(name="valocus", description="コマンド一覧とヘルプを表示します")
@@ -562,11 +554,11 @@ async def valocus(interaction: discord.Interaction):
     embed.add_field(name="`/register [Riot ID]`", value="Riot IDを入力して自動取得します。", inline=False)
     embed.add_field(name="`/setrank [ランク]`", value="テキストで手動でランクを設定します。", inline=False)
     embed.add_field(name="`/myrank`", value="自分の登録情報を確認します。", inline=False)
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="ping", description="Botの応答を確認します")
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("pong!")
+    await interaction.response.send_message("pong!", ephemeral=True)
 
 keep_alive()
 TOKEN = os.environ.get("DISCORD_TOKEN")
