@@ -582,7 +582,7 @@ async def rankpanel(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=RankButtonView(), ephemeral=True)
 
 @bot.tree.command(name="myrank", description="現在の自分の登録情報を確認します")
-async defmyrank(interaction: discord.Interaction):
+async def myrank(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     data = get_user_data(interaction.user.id, auto_refresh=True)
     if data["rank"] == "Unranked" and data["riot_id"] == "未登録":
