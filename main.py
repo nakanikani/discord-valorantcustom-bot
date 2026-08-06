@@ -33,7 +33,7 @@ supabase_db = supabase.create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL
 RANK_ICONS = {
     "アイアン": "🟤", "ブロンズ": "🟤", "シルバー": "⚪",
     "ゴールド": "🟡", "プラチナ": "🔵", "ダイヤ": "🟣",
-    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "🟡✨",
+    "アセンダント": "🟢", "イモータル": "🔴", "レディアント": "✨",
     "Unranked": "❓"
 }
 
